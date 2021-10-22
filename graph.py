@@ -157,7 +157,7 @@ class Graph:
         """
         Return the intervened graph as a new graph.
         Arguments:
-            interventions: Single vertex or an iterable collection of vertices.
+            interventions: Single vertex or an iterable collection of vertices, or edges.
         """
         intervened_graph = copy.deepcopy(self.graph)
         if isinstance(interventions, collections.Iterable):
