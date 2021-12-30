@@ -41,7 +41,8 @@ class Environment(object):
             if v in self.sem.roots():
                 state[v] = self.sem.equations[v](self.num_samples)
             elif v == 'T':
-                state[v] = 1
+                # state[v] = torch.ones(self.num_samples)
+                state[v] = torch.randint(0,2,(self.num_samples,))
             else:
                 state[v] = self.sem.equations[v](state)
         self.states.append(state)
@@ -90,14 +91,23 @@ class Environment(object):
         return outcome
 
 
-    def plot_state_distribution(self, target = 'Y'):
+    def plot_state_distribution_change(self, target = 'Y', save_path = None):
+        init_var = self.states[0][target].numpy()
         target_var = self.states[-1][target].numpy()
+        min_val = min(target_var.min(),init_var.min())
+        max_val = min(target_var.max(),init_var.max())
         Z = self.states[0]['Z']
-        bins = np.linspace(target_var.min(), target_var.max(),100)
+        bins = np.linspace(min_val, max_val,50)
+        plt.subplot(1, 2, 1)
+        plt.hist(init_var[Z==0], bins, alpha=0.5, label='x')
+        plt.hist(init_var[Z==1], bins, alpha=0.5, label='y')
+        plt.subplot(1, 2, 2)
         plt.hist(target_var[Z==0], bins, alpha=0.5, label='x')
         plt.hist(target_var[Z==1], bins, alpha=0.5, label='y')
-        plt.legend(loc='upper right')
-        plt.show()
+        plt.legend(['group A', 'group B'],loc='upper right')
+        plt.savefig(save_path+'_dist_change.pdf')
+        plt.close()
+        # plt.show()
 
 
     def intervene(self):
@@ -119,7 +129,7 @@ class SEM(Graph):
     def sample(self, n_samples):
         sample = {}
         for v in self.topological_sort():
-            print("Sample vertex {}...".format(v), end=' ')
+            print("Sample vertex {0}...".format(v))
             if v in self.roots():
                 sample[v] = self.equations[v](n_samples)
             else:
