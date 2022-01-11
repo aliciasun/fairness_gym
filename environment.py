@@ -88,7 +88,8 @@ class Environment(object):
         Z = self.states[0]['Z']
         outcome['A'] = torch.mean(target_var[Z==0])
         outcome['B'] = torch.mean(target_var[Z==1])
-        return outcome
+        # return outcome
+        return torch.mean(target_var[Z==1])-torch.mean(target_var[Z==0])
 
 
     def plot_state_distribution_change(self, target = 'Y', save_path = None):
@@ -99,11 +100,11 @@ class Environment(object):
         Z = self.states[0]['Z']
         bins = np.linspace(min_val, max_val,50)
         plt.subplot(1, 2, 1)
-        plt.hist(init_var[Z==0], bins, alpha=0.5, label='x')
-        plt.hist(init_var[Z==1], bins, alpha=0.5, label='y')
+        plt.hist(init_var[Z==0], bins, density=True, alpha=0.5, label='x')
+        plt.hist(init_var[Z==1], bins, density=True, alpha=0.5, label='y')
         plt.subplot(1, 2, 2)
-        plt.hist(target_var[Z==0], bins, alpha=0.5, label='x')
-        plt.hist(target_var[Z==1], bins, alpha=0.5, label='y')
+        plt.hist(target_var[Z==0], bins, density=True, alpha=0.5, label='x')
+        plt.hist(target_var[Z==1], bins, density=True,alpha=0.5, label='y')
         plt.legend(['group A', 'group B'],loc='upper right')
         plt.savefig(save_path+'_dist_change.pdf')
         plt.close()

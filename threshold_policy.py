@@ -1,3 +1,5 @@
+import matplotlib.pyplot as plt
+
 import torch
 import bisect
 import attr
@@ -21,6 +23,7 @@ class ThresholdPolicy():
         # self.state = state
         self.groups = self.env.num_groups
         self.cost_matrix = np.array([[0, -self.env.utility_default],[0, self.env.utility_repay]])
+        self.thresholds = [[],[]]
  
     def get_action(self, state, rng=None):
         if rng is None:
@@ -34,14 +37,17 @@ class ThresholdPolicy():
             NotImplementedError
         for group in range(self.groups):
             threshold = thresholds[int(group)].sample()
-            # print("threshold for group {0} is {0}".format(group,threshold))
+            # print("threshold for group {0} is {1}".format(group,threshold))
             action[(state['Z']==group)&(state['X']>threshold)]=1
+            self.thresholds[group].append(threshold)
         return action
     
     # def get_reward(self, state, roc, tpr_target):
 
     #     """Returns negative reward suitable for optimization by minimization."""
     #     reward = 0
+
+
 
     def get_profit(self, rate):
         # per_group_profit = self.env.
@@ -54,19 +60,28 @@ class ThresholdPolicy():
         maximize reward without constraint
         """
         break_even_prob = self.env.break_even_prob
-        def negative_reward(rate):
-            threshold = np.quantile(state['X'],rate)
-            predictions = (state['X']>=threshold)
-            confusion_matrix = sklearn_metrics.confusion_matrix(state['Y'], predictions)
-            reward = np.multiply(confusion_matrix, self.cost_matrix).sum()
-            return -reward
+        # opt = scipy.optimize.root(self.env.break_even_rate,0.5,args=state)
         opt = scipy.optimize.minimize_scalar(
-                negative_reward,
+                self.env.break_even_rate,
                 bounds=[0, 1],
                 method="bounded",
-                options={"maxiter": 100})
+                options={"maxiter": 100},
+                args=state)
+
+        # def negative_reward(rate):
+        #     threshold = np.quantile(state['X'],rate)
+        #     predictions = (state['X']>=threshold)
+        #     confusion_matrix = sklearn_metrics.confusion_matrix(state['Y'], predictions)
+        #     reward = np.multiply(confusion_matrix, self.cost_matrix).sum()
+        #     return -reward
+        # opt = scipy.optimize.minimize_scalar(
+        #         negative_reward,
+        #         bounds=[0, 1],
+        #         method="bounded",
+        #         options={"maxiter": 100})
+        threshold_score = np.quantile(state['X'],opt.x)
         return ({
-            group: RandomizedThreshold(weights=[1], values=[np.quantile(state['X'],opt.x)], rng=rng) for group in range(self.groups)})
+            group: RandomizedThreshold(weights=[1], values=[threshold_score], rng=rng) for group in range(self.groups)})
         # return np.trunc(self.env.perf+1-break_even_prob)
         
     def demo_parity_threshold(self, state, rng=None):
@@ -119,7 +134,12 @@ class ThresholdPolicy():
             group: threshold_from_tpr(roc[group], opt.x, rng=rng) for group in range(num_group)})
 
 
-
+    def plot_policy(self):
+        plt.plot(self.thresholds[0],linestyle='dashed',color='r')
+        plt.plot(self.thresholds[1],linestyle='dashed',color='blue')
+        plt.ylim([300, 850])
+        plt.savefig(self.name+'_thresholds.pdf')
+        plt.close()
 
 
 

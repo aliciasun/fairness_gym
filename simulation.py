@@ -1,5 +1,8 @@
 import argparse
 from tqdm import tqdm
+import numpy as np
+
+
 from environment import Environment, SEM
 from agent import Agent
 
@@ -21,25 +24,40 @@ def simulation(env, agent, num_steps = 100):
         # reward = env.get_reward(new_state,action)
         utilities.append(reward)
         scores.append(env.avg_outcome(target='X'))
-    env.plot_state_distribution_change(target='X',save_path=agent.name)
+    save_path = agent.name+'_util_'+str(env.utility_ratio)+'_pl_'+str(env.p_l_ratio)
+    env.plot_state_distribution_change(target='X',save_path=save_path)
+    agent.policy.plot_policy()
     return utilities, scores
 
 
 
 class LoanApplication(Environment):
-    def __init__(self, setting = 'synthetic'):
+    def __init__(self, setting = 'synthetic',param=None):
 
         self.max_score = 850
         self.min_score = 300
-        self.c_increase = 75
-        self.c_decrease = 75
+        if param:
+            if 'p_l_ratio' in param:
+                self.p_l_ratio = param['p_l_ratio']
+                self.c_increase = 5
+                self.c_decrease = self.c_increase*self.p_l_ratio
+            if 'utility_ratio' in param:
+                self.utility_ratio = param['utility_ratio']
+                self.utility_repay = 1
+                self.utility_default = self.utility_ratio
+        else:
+            self.c_increase = 1
+            self.c_decrease = 1
+            self.utility_repay = 1
+            self.utility_default = 1
+            self.p_l_ratio = 1
+        print(self.p_l_ratio)
         
-        self.utility_repay = 50
-        self.utility_default = 50
+        
         self.break_even_prob = self.utility_default/(self.utility_default+self.utility_repay)
         self.utility = 0
 
-        self.num_samples = 1000
+        self.num_samples = 10000
         self.setting = setting
 
         if setting == 'synthetic':
@@ -75,7 +93,7 @@ class LoanApplication(Environment):
             else:
                 sem.attach_equation(v, lambda n: torch.randn(n))
         sem.attach_equation("X", lambda state: self.init_credit_score(state))
-        sem.attach_equation("Y", lambda state: self.repay_probability(state))
+        sem.attach_equation("Y", lambda state: self.sample_outcome(state))
         self.sem = sem
         self.transitions = self.sem.equations.copy()
         self.set_transition('X', lambda state: self.credit_score_update(state))
@@ -87,8 +105,12 @@ class LoanApplication(Environment):
     def init_credit_score(self, state):
         """Sample scores X from X~P(X|A)"""
         if self.setting == 'synthetic':
-            init_score_group_0 = torch.normal(450, 25, size=state['Z'].shape)
-            init_score_group_1 = torch.normal(550, 50, size=state['Z'].shape)
+            init_score_group_0 = torch.clamp(torch.normal(450, 25, size=state['Z'].shape),
+                min=self.min_score, 
+                max=self.max_score)
+            init_score_group_1 = torch.clamp(torch.normal(550, 50, size=state['Z'].shape),
+                min=self.min_score, 
+                max=self.max_score)
         else:
             exogenous_noise = torch.rand(size=state['Z'].shape).numpy()
             init_score_group_0 = self.cdf_X_group_0(exogenous_noise)
@@ -114,15 +136,22 @@ class LoanApplication(Environment):
         """
         if self.setting == 'synthetic':
             prob = 0.001*state['X']
-            output = torch.bernoulli(prob)
+            # output = torch.bernoulli(torch.Tensor(prob))
         else:  
             is_group_1 = (state['Z'] == torch.ones(state['Z'].shape)).numpy()
             prob = self.repay_prob_group_1(state['X']) ** (is_group_1) \
                     * self.repay_prob_group_0(state['X']) ** (1. - is_group_1)
-            output = torch.bernoulli(torch.Tensor(prob))
-        return output
+            # output = torch.bernoulli(torch.Tensor(prob))
+        return prob
 
+    def sample_outcome(self, state):
+        prob = self.repay_probability(state)
+        return torch.bernoulli(torch.Tensor(prob))
 
+    def break_even_rate(self, rate, state):
+        break_even_credit_score = np.quantile(state['X'], rate)
+        repay_prob = self.repay_probability({'X':break_even_credit_score})
+        return abs(repay_prob-self.break_even_prob)
 
     def get_reward(self, action):
         state = self.states[-1]
@@ -134,7 +163,6 @@ class LoanApplication(Environment):
 
 
 if __name__ == "__main__":
-    RANDOM_SEED = 42
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='loan',
                         help='name of dataset')
@@ -147,9 +175,25 @@ if __name__ == "__main__":
         action_space = [0,1]
         agent_prof = Agent(loan_env, 'max_profit', action_space)
         agent_eo = Agent(loan_env, 'eq_opp', action_space)  
-        util_prof, score_prof = simulation(loan_env, agent_prof, num_steps=10)
-
-        util_eo, score_eo = simulation(loan_env, agent_eo, num_steps=10)
+        # util_prof, score_prof = simulation(loan_env, agent_prof, num_steps=100)
+        p_l_ratio = [0.25, 0.5, 1,2, 3, 4,5]
+        utility_ratio = [0.5, 1,2]
+        scores_eo = []
+        scores_prof = []
+        for util in utility_ratio:
+            for pl in p_l_ratio:
+                param = {}
+                param['p_l_ratio'] = pl
+                param['utility_ratio'] = util
+                loan_env = LoanApplication(param=param)
+                util_prof, score_prof = simulation(loan_env, agent_prof, num_steps=100)
+                scores_prof.append(score_prof[-1])
+                loan_env = LoanApplication(param=param)
+                util_eo, score_eo = simulation(loan_env, agent_eo, num_steps=100)
+                scores_eo.append(score_eo[-1])
+            print("current util is {0}".format(util))
+            print(scores_prof)
+            print(scores_eo)
 
 
 
