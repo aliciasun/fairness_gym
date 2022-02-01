@@ -84,12 +84,16 @@ class Environment(object):
     
     def avg_outcome(self, target = 'Y'):
         outcome = {}
-        target_var = self.states[-1][target]
+        target_end = self.states[-1][target]
+        target_init = self.states[0][target]
         Z = self.states[0]['Z']
-        outcome['A'] = torch.mean(target_var[Z==0])
-        outcome['B'] = torch.mean(target_var[Z==1])
-        # return outcome
-        return torch.mean(target_var[Z==1])-torch.mean(target_var[Z==0])
+        outcome['A_change'] = torch.mean(target_end[Z==0])-torch.mean(target_init[Z==0])
+        outcome['B_change'] = torch.mean(target_end[Z==1])-torch.mean(target_init[Z==1])
+        outcome['disparity_before'] = torch.mean(target_init[Z==1])-torch.mean(target_init[Z==0])
+        outcome['disparity_after'] = torch.mean(target_end[Z==1])-torch.mean(target_end[Z==0])
+        outcome['disparity_change'] = outcome['disparity_after']-outcome['disparity_before']
+        return outcome
+        # return torch.mean(target_var[Z==1])-torch.mean(target_var[Z==0])
 
 
     def plot_state_distribution_change(self, target = 'Y', save_path = None):

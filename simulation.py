@@ -24,7 +24,7 @@ def simulation(env, agent, num_steps = 100):
         # reward = env.get_reward(new_state,action)
         utilities.append(reward)
         scores.append(env.avg_outcome(target='X'))
-    save_path = agent.name+'_util_'+str(env.utility_ratio)+'_pl_'+str(env.p_l_ratio)
+    save_path = 'figure/'+ agent.name+'_util_'+str(env.utility_ratio)+'_pl_'+str(env.p_l_ratio)
     env.plot_state_distribution_change(target='X',save_path=save_path)
     agent.policy.plot_policy()
     return utilities, scores
@@ -46,12 +46,12 @@ class LoanApplication(Environment):
                 self.utility_repay = 1
                 self.utility_default = self.utility_ratio
         else:
-            self.c_increase = 1
-            self.c_decrease = 1
+            self.c_increase = 75
+            self.c_decrease = 150
             self.utility_repay = 1
-            self.utility_default = 1
+            self.utility_default = 4
             self.p_l_ratio = 1
-        print(self.p_l_ratio)
+        # print(self.p_l_ratio)
         
         
         self.break_even_prob = self.utility_default/(self.utility_default+self.utility_repay)
@@ -116,7 +116,7 @@ class LoanApplication(Environment):
             init_score_group_0 = self.cdf_X_group_0(exogenous_noise)
             init_score_group_1 = self.cdf_X_group_1(exogenous_noise)
 
-        is_group_1 = (state['Z'] == torch.ones(state['Z'].shape)).float().numpy()
+        is_group_1 = (state['Z'] == torch.ones(state['Z'].shape)).float()
         output = init_score_group_1 ** (is_group_1) \
                     * init_score_group_0 ** (1. - is_group_1)
         return output
@@ -138,7 +138,7 @@ class LoanApplication(Environment):
             prob = 0.001*state['X']
             # output = torch.bernoulli(torch.Tensor(prob))
         else:  
-            is_group_1 = (state['Z'] == torch.ones(state['Z'].shape)).numpy()
+            is_group_1 = (state['Z'] == torch.ones(state['Z'].shape))
             prob = self.repay_prob_group_1(state['X']) ** (is_group_1) \
                     * self.repay_prob_group_0(state['X']) ** (1. - is_group_1)
             # output = torch.bernoulli(torch.Tensor(prob))
@@ -174,14 +174,21 @@ if __name__ == "__main__":
         loan_env = LoanApplication()
         action_space = [0,1]
         agent_prof = Agent(loan_env, 'max_profit', action_space)
-        agent_eo = Agent(loan_env, 'eq_opp', action_space)  
+        agent_eo = Agent(loan_env, 'eq_opp', action_space)
+        # loan_env = LoanApplication()  
         # util_prof, score_prof = simulation(loan_env, agent_prof, num_steps=100)
-        p_l_ratio = [0.25, 0.5, 1,2, 3, 4,5]
-        utility_ratio = [0.5, 1,2]
+        # print(score_prof)
+        # loan_env = LoanApplication()
+        # util_eo, score_eo = simulation(loan_env, agent_eo, num_steps=100)
+        # print(score_eo)
+        p_l_ratio = [0.25, 0.5, 1,2, 5]
+        utility_ratio = [0.25, 0.5, 1,2, 5]
         scores_eo = []
         scores_prof = []
         for util in utility_ratio:
+            print("current util is {0}".format(util))
             for pl in p_l_ratio:
+                print("current util is {0}".format(util))
                 param = {}
                 param['p_l_ratio'] = pl
                 param['utility_ratio'] = util
@@ -191,9 +198,8 @@ if __name__ == "__main__":
                 loan_env = LoanApplication(param=param)
                 util_eo, score_eo = simulation(loan_env, agent_eo, num_steps=100)
                 scores_eo.append(score_eo[-1])
-            print("current util is {0}".format(util))
-            print(scores_prof)
-            print(scores_eo)
+                print(score_prof[-1])
+                print(score_eo[-1])
 
 
 
