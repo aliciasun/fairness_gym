@@ -1,3 +1,4 @@
+from logging import raiseExceptions
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -5,6 +6,8 @@ import torch
 
 
 from graph import Graph
+from torch.distributions.relaxed_bernoulli import RelaxedBernoulli
+from torch.nn.functional import kl_div
 
 
 class Environment(object):
@@ -56,60 +59,78 @@ class Environment(object):
             self.transitions[vertex] = equation
 
 
-    def update(self, action):
+    def update(self, current_state, action):
         """
         Update the Markov Model and return average reward
         """
         new_state = {}
+        current_state['T'] = action
         for v in self.sem.topological_sort():
             if v in self.sem.roots():
-                # root varibale are only updated at the beginning
-                    new_state[v] = self.states[-1][v]
-                    # new_state[v] = self.sem.equations[v](self.num_samples)
-
+                # root varibale are not updated
+                new_state[v] = torch.clone(current_state[v])
             else:
-                if v == 'T':
-                    #intervention node
-                    new_state[v] = action
-                else:
-                    new_state[v] = self.transitions[v](self.states[-1])
-        self.states.append(new_state)
-        reward = self.get_reward(action)
-        return torch.mean(reward.float())
+                if v != 'T':
+                    if v =='X':
+                        # transition of features from prev state
+                        new_state[v] = torch.clone(self.transitions[v](current_state))
+                    else:
+                        new_state[v] = torch.clone(self.transitions[v](new_state))
+        # self.states.append(new_state)
+        return new_state
 
 
     def get_reward(self, action):
         return NotImplementedError
 
     
-    def avg_outcome(self, target = 'Y'):
+    def compute_outcome(self, target = 'Y', agg = 'mean'):
         outcome = {}
         target_end = self.states[-1][target]
         target_init = self.states[0][target]
         Z = self.states[0]['Z']
-        outcome['A_change'] = torch.mean(target_end[Z==0])-torch.mean(target_init[Z==0])
-        outcome['B_change'] = torch.mean(target_end[Z==1])-torch.mean(target_init[Z==1])
-        outcome['disparity_before'] = torch.mean(target_init[Z==1])-torch.mean(target_init[Z==0])
-        outcome['disparity_after'] = torch.mean(target_end[Z==1])-torch.mean(target_end[Z==0])
-        outcome['disparity_change'] = outcome['disparity_after']-outcome['disparity_before']
+        def dist(f,g):
+            if agg == 'mean':
+                return torch.mean(f-g)
+            elif agg == 'kl':
+                return kl_div(f,g)
+            else:
+                NotImplementedError
+        outcome['A'] = (torch.mean(target_end[Z==0])).detach().numpy()
+        outcome['B'] = (torch.mean(target_end[Z==1])).detach().numpy()
+        outcome['A_change'] = dist(target_end[Z==0],target_init[Z==0]).detach().numpy()
+        outcome['B_change'] = dist(target_end[Z==1],target_init[Z==1]).detach().numpy()
+        # outcome['disparity_before'] =  dist(target_init[Z==1],target_init[Z==0]).detach().numpy()
+        # outcome['disparity_after'] = dist(target_end[Z==1],target_end[Z==0]).detach().numpy()
+        outcome['disparity_change'] = abs(outcome['A_change']-outcome['B_change'])
         return outcome
         # return torch.mean(target_var[Z==1])-torch.mean(target_var[Z==0])
 
 
     def plot_state_distribution_change(self, target = 'Y', save_path = None):
-        init_var = self.states[0][target].numpy()
-        target_var = self.states[-1][target].numpy()
+        init_var = self.states[0][target].detach().numpy()
+        target_var = self.states[-1][target].detach().numpy()
         min_val = min(target_var.min(),init_var.min())
         max_val = min(target_var.max(),init_var.max())
         Z = self.states[0]['Z']
-        bins = np.linspace(min_val, max_val,50)
-        plt.subplot(1, 2, 1)
-        plt.hist(init_var[Z==0], bins, density=True, alpha=0.5, label='x')
-        plt.hist(init_var[Z==1], bins, density=True, alpha=0.5, label='y')
-        plt.subplot(1, 2, 2)
-        plt.hist(target_var[Z==0], bins, density=True, alpha=0.5, label='x')
-        plt.hist(target_var[Z==1], bins, density=True,alpha=0.5, label='y')
+        group_0 = target_var[Z==0]
+        group_1 = target_var[Z==1]
+        # bins = np.linspace(min_val, max_val,50)
+        bins = np.linspace(0,1)
+        # plt.subplot(1, 2, 1)
+        # plt.hist(init_var[Z==0], bins, density=True, alpha=0.5, label='x')
+        # plt.hist(init_var[Z==1], bins, density=True, alpha=0.5, label='y')
+        # plt.xlabel('Repay Probability')
+        # plt.ylabel('Histogram')
+        # plt.subplot(1, 2, 2)
+        plt.hist(group_0, bins, weights=np.ones(len(group_0))/len(group_0), density=False,
+                 alpha=0.5, label='x')
+        plt.hist(group_1, bins, weights=np.ones(len(group_1))/len(group_1), density=False,
+            alpha=0.5, label='y')
+        plt.ylim([0, 0.5])
+        plt.xlabel('Repay Probability')
         plt.legend(['group A', 'group B'],loc='upper right')
+        plt.ylabel('Histogram')
         plt.savefig(save_path+'_dist_change.pdf')
         plt.close()
         # plt.show()

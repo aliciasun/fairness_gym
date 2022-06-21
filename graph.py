@@ -210,4 +210,7 @@ class Graph:
             pass
         G = self._convert_to_nx()
         G.graph['dpi'] = 80
-        return draw(G)
+
+        # return draw(G)
+        return nx.nx_agraph.graphviz_layout(G, prog="circo")
+
