@@ -22,11 +22,22 @@ def simulation(env,agent, result_dir, num_steps = 100,  plot=False):
     res['mean_target'] = np.zeros((2,num_steps))
     res['mean_action'] = np.zeros((2,num_steps))
     cum_reward = 0
+    num_steps = 5
     for i in tqdm(range(num_steps)):
+
         cur_state = env.states[-1]
+        # print(cur_state['Y'])
+        print(torch.mean(cur_state['X']))
+        print(torch.mean(cur_state['Y']))
+
         action = agent.get_action(env.states)
+        action = torch.ones_like(env.states[0]['Z'])
         reward = env.get_reward(cur_state,action)
+        cur_state['Y'] = 0.5*torch.zeros_like(env.states[0]['Z'])
+
         new_state = env.update(cur_state,action)
+        # env.find_eq_point()
+        # print(torch.mean(new_state['Y']))
         env.states.append(new_state)
         outcome = env.compute_outcome(target=env.target_variable)
         cum_reward+=reward
@@ -43,10 +54,11 @@ def simulation(env,agent, result_dir, num_steps = 100,  plot=False):
     # if not os.path.exists('figures/{0}'.format(env.root)):
     #     os.makedirs('figures/{0}'.format(env.root))
     np.savez(res_dir+'/'+ agent_name+'_states', env.states)
+    agent.policy.save_policy(save_path = res_dir+'/'+agent.name+'_threshold')
+
     # save_path = os.path.join('figures',env.root,str(num_steps) +'_'+agent.name)
     # if plot:
     #     # env.plot_state_distribution_change(target='Y',save_path=save_path)
-    #     agent.policy.plot_policy(save_path = agent.name+'_threshold')
     return res
 
 
@@ -56,10 +68,12 @@ def simulation(env,agent, result_dir, num_steps = 100,  plot=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, default='gaussian_2d',
+    parser.add_argument('--dataset', type=str, default='gaussian_1d',
                         help='name of dataset')
     parser.add_argument('--setting', type=str, default='setting1',
         help='name of dataset')
+    parser.add_argument('--save', type=bool, default=False,
+        help='save result')
     args = parser.parse_args()
 
     
@@ -86,8 +100,9 @@ if __name__ == "__main__":
         env._init_environment()
         agent =  Agent(env, agent_name, action_space)
         res = simulation(env, agent, res_dir, num_steps=num_steps, plot=True)
-        save_path = os.path.join(res_dir,'{0}.npz'.format(agent_name))
-        np.savez(save_path, **res)
+        if args.save:
+            save_path = os.path.join(res_dir,'{0}.npz'.format(agent_name))
+            np.savez(save_path, **res)
     
 
 

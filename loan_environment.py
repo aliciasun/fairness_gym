@@ -21,7 +21,8 @@ class LoanApplication(Environment):
         
 
         self.utility_ratio = self.utility_default/self.utility_repay
-        self.p_l_ratio = self.x_decrease/(self.x_decrease+self.x_increase)
+        self.cost_ratio = self.x_decrease/(self.x_decrease+self.x_increase)
+        print("cost ratio is: {0}".format(self.cost_ratio))
         self.break_even_prob = self.utility_default/(self.utility_default+self.utility_repay)
 
         
@@ -36,11 +37,10 @@ class LoanApplication(Environment):
         self.cdf_X_group_0, self.cdf_X_group_1 = inv_cdfs  
         #p(Y|X,Z)
         self.repay_prob_group_0, self.repay_prob_group_1= loan_repaid_probs
-        self.target_variable = 'Y'
         self.with_noise = False
-        self.root = 'real_data/cost_ratio_{:.1f}'.format(self.p_l_ratio)
+        self.root = 'real_data/cost_ratio_{:.1f}'.format(self.cost_ratio)
 
-
+        self.target_variable = 'Y'
         self.utility = 0
 
 

@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import os
 
 import torch
 import bisect
@@ -9,8 +10,12 @@ import numpy as np
 import scipy.optimize
 import scipy.spatial
 from sklearn import metrics as sklearn_metrics
+from torch import nn, optim, threshold_
 
 from fico import get_data_args
+from learned_policy import LearnedPolicy, projected_gradient_step
+from torch.autograd import Variable
+
 
 
 class ThresholdPolicy():
@@ -24,42 +29,72 @@ class ThresholdPolicy():
         self.groups = self.env.num_groups
         self.cost_matrix = np.array([[0, -self.env.utility_default],[0, self.env.utility_repay]])
         self.thresholds = [[],[]]
+        self.target_variable = self.env.target_variable
+        if self.name == 'eq_impact':
+            self.model = LearnedPolicy(name='eq_impact', env=self.env)
+            self.optimizer = torch.optim.SGD(self.model.parameters(),lr=0.01)
+
  
-    def get_action(self, state, rng=None):
+    def get_action(self, states, rng=None):
         if rng is None:
             rng = np.random.RandomState(42)
-        action = np.zeros_like(state['Z'])
+        action = torch.zeros_like(states[-1]['Z'])
+        state = states[-1]
         if self.name == 'max_profit':
-            thresholds = self.max_profit_threshold(state, rng=rng)
+            thresholds = self.max_profit_threshold(states, rng=rng)
+        elif self.name == 'demo_parity':
+            thresholds = self.demo_parity_threshold(states, rng=rng)
         elif self.name == 'eq_opp':
-            thresholds = self.eq_opp_threshold(state,rng=rng)
+            thresholds = self.equalized_opp_threshold(states,rng=rng)
+        elif self.name == 'eq_impact':
+            self.model = LearnedPolicy(name='eq_impact', env=self.env)
+            self.model.train()
+            num_steps = 50
+            lr = 0.01
+            for i in range(num_steps):
+                self.optimizer.zero_grad()
+                if i>=20:
+                    lr *= 0.1
+                tau = projected_gradient_step(self.model,state,self.optimizer,lr)
+            tau = torch.clamp(tau.detach(),0,1).numpy()
+            # print(tau)
+            thresholds = {group:RandomizedThreshold(weights=[1], values=[tau[group]], rng=rng) for group in range(self.groups)}
         else:
             NotImplementedError
         for group in range(self.groups):
             threshold = thresholds[int(group)].sample()
-            # print("threshold for group {0} is {1}".format(group,threshold))
-            action[(state['Z']==group)&(state['X']>threshold)]=1
+            action[(state['Z']==group)*(state[self.target_variable]>=threshold)]=1.0
             self.thresholds[group].append(threshold)
+            print("threshold for group {0} is {1}".format(group,threshold))
         return action
     
-    # def get_reward(self, state, roc, tpr_target):
 
-    #     """Returns negative reward suitable for optimization by minimization."""
-    #     reward = 0
 
+
+
+    def get_attrs_per_group(self, state):
+        from collections import defaultdict
+        attrs = defaultdict(list)
+        for group in range(self.env.num_groups):
+            group_selector = (state['Z'] == group)
+            # attrs['predictions'].append(state['T'][group_selector])
+            attrs['labels'].append(state['O'][group_selector])
+            attrs['weights'].append([1 for _ in attrs['labels'][group]])
+        return attrs
 
 
     def get_profit(self, rate):
-        # per_group_profit = self.env.
+        # per_group_profit = self.env. 
         for groups in range(self.groups):
             score = self.env.cdf_X_group_0(rate)
 
 
-    def max_profit_threshold(self, state, rng=None):
+    def max_profit_threshold(self, states, rng=None):
         """
         maximize reward without constraint
         """
         break_even_prob = self.env.break_even_prob
+        state = states[-1]
         # opt = scipy.optimize.root(self.env.break_even_rate,0.5,args=state)
         opt = scipy.optimize.minimize_scalar(
                 self.env.break_even_rate,
@@ -67,59 +102,80 @@ class ThresholdPolicy():
                 method="bounded",
                 options={"maxiter": 100},
                 args=state)
-
-        # def negative_reward(rate):
-        #     threshold = np.quantile(state['X'],rate)
-        #     predictions = (state['X']>=threshold)
-        #     confusion_matrix = sklearn_metrics.confusion_matrix(state['Y'], predictions)
-        #     reward = np.multiply(confusion_matrix, self.cost_matrix).sum()
-        #     return -reward
-        # opt = scipy.optimize.minimize_scalar(
-        #         negative_reward,
-        #         bounds=[0, 1],
-        #         method="bounded",
-        #         options={"maxiter": 100})
-        threshold_score = np.quantile(state['X'],opt.x)
+        # threshold_score = np.quantile(state[self.target_variable].detach(),opt.x)
         return ({
-            group: RandomizedThreshold(weights=[1], values=[threshold_score], rng=rng) for group in range(self.groups)})
-        # return np.trunc(self.env.perf+1-break_even_prob)
-        
-    def demo_parity_threshold(self, state, rng=None):
+            group: RandomizedThreshold(weights=[1], values=[opt.x], rng=rng) for group in range(self.groups)})
+
+
+    def demo_parity_threshold(self, states, rng=None):
         """
         Accept the same percentage of people regardless of group
         """
-        pass
+        state = states[-1]
+        target = self.target_variable
 
-    def eq_opp_threshold(self, state, rng=None):
-        num_group = len(np.unique(state['Z']))
+        def negative_reward(quantile):
+            reward = 0
+            for group in range(self.env.num_groups):
+                group_selector = (state['Z'] == group)
+                target_var = state[target][group_selector].detach().numpy()
+                threshold_score = np.quantile(target_var,quantile)
+                prediction = (target_var>=threshold_score)
+                outcome = state['O'][group_selector].detach().numpy()
+                confusion_matrix = sklearn_metrics.confusion_matrix(
+                    outcome,
+                    prediction)
+                reward+= np.multiply(confusion_matrix, self.cost_matrix).sum()
+            reward = reward/self.env.num_samples
+            return -reward
+        opt = scipy.optimize.minimize_scalar(
+                negative_reward,
+                bounds=[0, 1],
+                method="bounded",
+                options={"maxiter": 100})
+        return ({
+            g: RandomizedThreshold(weights=[1], 
+                values=[np.quantile(state[target][state['Z']==g].detach().numpy(),opt.x)], rng=rng) for g in range(self.groups)})
+
+
+
+    def equalized_opp_threshold(self, states, rng=None):
+        """
+        Equality of opportunity constraints require that the classifier
+        have equal true-positive rate for all groups and can be enforced as a
+        post-processing step on a threshold-based binary classifier by creating
+        group-specific thresholds.
+        """
+        import multiprocessing as mp
+
+
+        state = states[-1]
+        attr = self.get_attrs_per_group(state)
         roc = {}
-        group_weights = {}
-        group_labels = {}
         group_predictions = {}
+        group_weights = {}
 
-        for group in range(num_group):
+        for group in range(self.env.num_groups):
             group_selector = (state['Z'] == group)
-            group_predictions[group] = state['X'][group_selector]
-            group_labels[group] = state['Y'][group_selector]
-            group_weights[group] = [1 for _ in group_labels[group]]
-
+            group_predictions[group] = state['Y'][group_selector]
             fprs, tprs, thresholds = sklearn_metrics.roc_curve(
-                y_true=group_labels[group],
-                y_score=group_predictions[group],
-                sample_weight=group_weights[group])
+                y_true=state['O'][group_selector].detach(),
+                y_score=group_predictions[group].detach(),
+                sample_weight=attr['weights'][group])
             roc[group] = (fprs, np.nan_to_num(tprs), thresholds)
+
         def negative_reward(tpr_target):
             reward = 0
-            for group in range(num_group):
+            for group in range(self.env.num_groups):
                 weights_ = []
                 predictions_ = []
                 labels_ = []
                 for thresh_prob, threshold in threshold_from_tpr(roc[group], tpr_target, rng=rng).iteritems():
-                    labels_.extend(group_labels[group])
-                    for weight, prediction in zip(group_weights[group],
+                    labels_.extend(attr['labels'][group].detach())
+                    for weight, prediction in zip(attr['weights'][group],
                                         group_predictions[group]):
                         weights_.append(weight * thresh_prob)
-                        predictions_.append(prediction >= threshold)
+                        predictions_.append((prediction >= threshold))
                 confusion_matrix = sklearn_metrics.confusion_matrix(
                     labels_, predictions_, sample_weight=weights_)
                 reward += np.multiply(confusion_matrix, self.cost_matrix).sum()
@@ -129,18 +185,24 @@ class ThresholdPolicy():
                 negative_reward,
                 bounds=[0, 1],
                 method="bounded",
-                options={"maxiter": 100})
+                options={"maxiter": 50})
         return ({
-            group: threshold_from_tpr(roc[group], opt.x, rng=rng) for group in range(num_group)})
+            group: threshold_from_tpr(roc[group], opt.x, rng=rng) for group in range(self.env.num_groups)})
 
 
-    def plot_policy(self):
-        plt.plot(self.thresholds[0],linestyle='dashed',color='r')
-        plt.plot(self.thresholds[1],linestyle='dashed',color='blue')
-        plt.ylim([300, 850])
-        plt.savefig(self.name+'_thresholds.pdf')
-        plt.close()
 
+
+    def save_policy(self, save_path):
+        np.savez(save_path,
+                A = self.thresholds[0], 
+                B = self.thresholds[1]) 
+        # plt.plot(self.thresholds[0],linestyle='dashed',color='r')
+        # plt.plot(self.thresholds[1],linestyle='dashed',color='blue')
+        # plt.ylim([0, 1])
+        # plt.xlabel('Time Step')
+        # plt.ylabel('Threshold')
+        # plt.savefig(os.path.join('figures', self.env.root,save_path))
+        # plt.close()
 
 
 
@@ -174,7 +236,7 @@ def eq_opp_threshold(self, state):
 
 
 
-def demographic_parity_threshold(self):
+def demographic_parity_threshold(self, state):
     f_profit = lambda rate: self.get_profit(rate)
     rate_opt = ternary_maximize(f_profit)
 

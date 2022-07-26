@@ -29,8 +29,11 @@ class SyntheticGaussian(Environment):
         self.with_noise = False
 
         self.utility = 0
+        self.cost_ratio = self.x_decrease/(self.x_decrease+self.x_increase)
+        print("cost ratio is: {0}".format(self.cost_ratio))
         self.break_even_prob = self.utility_default/(self.utility_default+self.utility_repay)
         self.target_variable = 'Y'
+
 
 
         sem = SEM({
@@ -56,6 +59,7 @@ class SyntheticGaussian(Environment):
         self.transitions = self.sem.equations.copy()
         self.set_transition('X', lambda state: self.feature_update(state))
         self.states = []
+
 
     
     def generate_init_group_membership(self, n):
@@ -109,7 +113,9 @@ class SyntheticGaussian(Environment):
         prob = 1./(1.+torch.exp(-1.*torch.mm(state['X'],weight[:,None])))
         if self.with_noise:
             prob = prob + exogenous_noise
+        # prob = (state['X']-torch.min(state['X']))/(torch.max(state['X'],torch.min(state['X'])))
         return torch.squeeze(prob)
+        
 
 
     def sample_outcome(self, state):
@@ -136,4 +142,18 @@ class SyntheticGaussian(Environment):
         output = torch.mean(self.utility_repay*repay - self.utility_default*default)
         self.utility += output
         return output
+
+
+    def find_eq_point(self):
+        x = torch.ones(1, 1, requires_grad=True) 
+        state = {'Z':torch.tensor([1]),'X':x}
+        output = self.generate_risk_score(state)
+        output.backward()
+        x_grad = state['X'].grad
+        eq_point = (x_grad*self.x_decrease)/(x_grad*(self.x_decrease+self.x_increase))
+
+        # eq_point = torch.mm(x_grad,torch.Tensor(self.x_decrease))/torch.mm(x_grad,torch.Tensor(self.x_decrease+self.x_increase))
+        # print(eq_point)
+        return eq_point
+
     
